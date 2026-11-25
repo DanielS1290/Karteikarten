@@ -26,6 +26,25 @@ const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.get
 const cats = () => db.categories.filter(c => !c.deleted).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 const cards = (cat = filter) => db.cards.filter(c => !c.deleted && (!cat || c.cat === cat));
 const catName = id => (db.categories.find(c => c.id === id) || {}).name || '–';
+const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899'];
+function catColor(id) {
+  const c = db.categories.find(x => x.id === id);
+  if (c && COLORS.includes(c.color)) return c.color;
+  return COLORS[[...String(id)].reduce((s, ch) => s + ch.charCodeAt(0), 0) % COLORS.length];
+}
+function colored(node, id) { node.style.borderLeft = '8px solid ' + catColor(id); return node; }
+function badge(id) {
+  const b = el('span', { className: 'badge', textContent: catName(id) });
+  b.style.background = catColor(id);
+  return b;
+}
+function colorPicker(c) {
+  return el('div', { className: 'swatches' }, COLORS.map(col => {
+    const b = btn('', () => { c.color = col; c.updated = Date.now(); save(); cardList(); }, catColor(c.id) === col ? 'on' : '');
+    b.style.background = col; b.setAttribute('aria-label', 'Farbe ' + col);
+    return b;
+  }));
+}
 const prog = c => c.prog || { box: 1, right: 0, wrong: 0, due: 0, last: 0 };
 const isDue = c => prog(c).due <= Date.now();
 const isHard = c => { const p = prog(c); return p.wrong > 0 && p.box <= 2; };
@@ -39,7 +58,8 @@ function el(tag, props = {}, ...kids) {
 }
 const btn = (text, fn, cls = '') => el('button', { type: 'button', textContent: text, className: cls, onclick: fn });
 let screen = '';
-const show = (...nodes) => { screen = ''; main.replaceChildren(...nodes.flat().filter(Boolean)); window.scrollTo(0, 0); };
+let guard = '';                              // Rückfrage bei laufender Abfrage / ungespeicherten Eingaben
+const show = (...nodes) => { screen = ''; guard = ''; main.replaceChildren(...nodes.flat().filter(Boolean)); window.scrollTo(0, 0); };
 
 function catSelect(value, withAll, onchange) {
   const s = el('select', { onchange: () => onchange && onchange(s.value) },
@@ -74,7 +94,7 @@ function home() {
   const tile = (ic, title, sub, fn) => el('button', { type: 'button', className: 'tile', onclick: fn },
     icon(ic), el('strong', { textContent: title }), el('span', { textContent: sub }));
   show(el('div', { className: 'panel' },
-    el('div', { className: 'over', textContent: 'STARTSEITE' }),
+    el('div', { className: 'over', textContent: (new Date().getHours() < 11 ? 'Moin' : 'Gude') + (settings.name ? ` ${settings.name}!` : '!') }),
     el('h1', { textContent: 'Lernzentrum' }),
     el('p', { className: 'muted', textContent: 'Deine persönliche Wissensdatenbank' }),
     el('div', { className: 'tiles' },
@@ -101,9 +121,9 @@ function learn() {
 }
 
 function categoryList() {
-  const row = c => el('div', { className: 'box list', onclick: () => { filter = c.id; go('cards'); } },
+  const row = c => colored(el('div', { className: 'box list', onclick: () => { filter = c.id; go('cards'); } },
     el('div', { textContent: c.name }),
-    el('div', { className: 'small', textContent: `${cards(c.id).length} Karten` }));
+    el('div', { className: 'small', textContent: `${cards(c.id).length} Karten` })), c.id);
   show(el('h2', { textContent: 'Kategorien' }), btn('+ Kategorie', addCategory, 'main'), cats().map(row));
   screen = 'cats';
 }
@@ -167,9 +187,10 @@ function session(queue, i = 0, score = 0) {
       card.items.map((t, k) => `${k + 1}. ${t}`).join('\n')), 'main'));
   }
 
-  show(el('div', { className: 'small', textContent: `${i + 1} / ${queue.length} · ${catName(card.cat)} · Fach ${prog(card).box}` }),
-    el('div', { className: 'box', textContent: card.question }), area, result,
+  show(el('div', { className: 'small', textContent: `${i + 1} / ${queue.length} · Fach ${prog(card).box}` }),
+    badge(card.cat), colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, result,
     el('p', {}, btn('Abbrechen', () => go('learn'))));
+  guard = 'Abfrage wirklich abbrechen?';
 }
 
 /* ---------- Karten verwalten ---------- */
@@ -177,7 +198,7 @@ function addCategory() {
   const name = (prompt('Name der Kategorie') || '').trim();
   if (!name) return;
   let c = cats().find(x => x.name.toLowerCase() === name.toLowerCase());
-  if (!c) { c = { id: uid(), name, updated: Date.now() }; db.categories.push(c); save(); }
+  if (!c) { c = { id: uid(), name, color: COLORS[cats().length % COLORS.length], updated: Date.now() }; db.categories.push(c); save(); }
   filter = c.id; go('cards');
 }
 function renameCategory() {
@@ -200,9 +221,10 @@ function cardList() {
     btn('+ Karte', () => editCard(), 'main'), btn('+ Kategorie', addCategory),
     filter ? btn('Umbenennen', renameCategory) : null,
     filter ? btn('Kategorie löschen', deleteCategory) : null,
-    cards().map(c => el('div', { className: 'box list', onclick: () => editCard(c) },
+    filter ? colorPicker(db.categories.find(x => x.id === filter)) : null,
+    cards().map(c => colored(el('div', { className: 'box list', onclick: () => editCard(c) }, badge(c.cat),
       el('div', { textContent: c.question }),
-      el('div', { className: 'small', textContent: `${catName(c.cat)} · ${TYPES[c.type]} · Fach ${prog(c).box}` }))));
+      el('div', { className: 'small', textContent: `${TYPES[c.type]} · Fach ${prog(c).box}` })), c.cat)));
   screen = 'cards';
 }
 
@@ -252,7 +274,7 @@ function editCard(card, preset = {}) {
   };
 
   show(el('h2', { textContent: card ? 'Karte bearbeiten' : 'Neue Karte' }),
-    el('div', { className: 'box form' }, 'Kategorie', cat, 'Typ', type, 'Frage', q, Object.values(parts)),
+    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Typ', type, 'Frage', q, Object.values(parts)),
     btn(card ? 'Speichern' : 'Speichern & nächste', submit, 'main'),
     btn('Zurück', cardList),
     card ? btn('Löschen', () => {
@@ -260,6 +282,26 @@ function editCard(card, preset = {}) {
       Object.assign(db.cards.find(x => x.id === card.id), { deleted: true, updated: Date.now() }); save(); cardList();
     }, 'bad') : null);
 }
+
+// Eingaben im Kartenformular merken
+['input', 'change'].forEach(t => main.addEventListener(t, () => {
+  if (main.querySelector('.card-form')) guard = 'Ungespeicherte Eingaben verwerfen?';
+}));
+
+/* ---------- Zurück-Taste ---------- */
+const exitBox = el('div', { className: 'overlay', hidden: true }, el('div', { className: 'box form' },
+  el('h2', { textContent: 'Wirklich verlassen?' }),
+  el('p', { textContent: 'Zum Schließen noch einmal „Zurück“.' }),
+  btn('Hier bleiben', () => {}, 'wide main')));
+document.body.append(exitBox);
+const arm = () => { if (!history.state) history.pushState({ app: 1 }, ''); };
+document.addEventListener('click', () => { exitBox.hidden = true; arm(); });
+window.addEventListener('popstate', e => {
+  if (e.state) return;
+  if (document.body.classList.contains('start')) { exitBox.hidden = false; return; }
+  if (!guard || confirm(guard)) go('home');
+  arm();
+});
 
 /* ---------- Statistik ---------- */
 function stats() {
@@ -349,7 +391,7 @@ sync();
     const i = el('input', { type, value: settings[key] || '', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
     return { key, i, node: el('label', {}, label, i) };
   };
-  const fields = [field('GitHub-Benutzername', 'owner'),
+  const fields = [field('Dein Vorname (für die Begrüßung)', 'name'), field('GitHub-Benutzername', 'owner'),
     field('Privates Daten-Repository', 'repo'), field('Token', 'token', 'password')];
   const saveSettings = () => {
     fields.forEach(f => settings[f.key] = f.i.value.trim());
