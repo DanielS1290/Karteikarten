@@ -47,3 +47,21 @@ summary{padding:8px 0;cursor:pointer}
 .opt.right.sel,.opt.wrong.sel{border-color:#7ea6ff;border-width:4px;padding:12px}
 .actions{position:sticky;bottom:68px;display:flex;justify-content:flex-end;gap:10px;padding:12px 0;background:var(--bg)}
 .actions button{margin:0;min-height:52px;min-width:112px}
+body{padding-bottom:84px}body.start{padding-bottom:0}
+nav button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px;font-size:.75rem}
+nav svg{width:24px;height:24px;stroke:currentColor}
+.spacer{height:84px}
+.actions{position:fixed;left:0;right:0;bottom:62px;padding:10px 12px;z-index:2}
+.actions button{min-width:120px}
+.cardhead{display:flex;justify-content:space-between;align-items:center}
+.level{display:inline-block;border:2px solid;border-radius:8px;padding:0 8px;margin-bottom:6px;font-size:.8rem;font-weight:700}
+.pencil{background:none;border:0;margin:0;padding:8px 10px;font-size:1.2rem}
+.chips{display:flex;gap:8px;margin:6px 0 12px}.chips button{flex:1;margin:0;padding:10px 4px;border-width:2px}.chips button.on{background:var(--accent);border-color:var(--accent)}
+.goal{background:var(--card);border-radius:18px;padding:14px;margin-top:16px}.goal .bar{background:var(--bg);margin:8px 0}.goal+.tiles{margin-top:12px}
+.bar.hit div{background:#22c55e}
+.catrow{display:flex;align-items:center;gap:12px}.catrow .grow{flex:1;min-width:0}.catrow .bar{height:6px;margin:6px 0;background:var(--bg)}
+.square{width:52px;height:52px;border-radius:14px;flex:none;display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700}.square svg.mdi{width:30px;height:30px}
+.chart{display:flex;align-items:flex-end;gap:3px;margin:10px 0}.col{flex:1;display:flex;flex-direction:column;text-align:center;font-size:.7rem;color:var(--muted)}.col .r{background:#22c55e}.col .w{background:#ef4444}
+.result{text-align:center;margin:40px 0 24px}.pct{font-size:4rem;font-weight:700}
+#toasts{position:fixed;top:16px;left:12px;right:12px;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;z-index:10}
+.toast{background:#fff;color:#111;font-weight:700;font-size:1.15rem;border-radius:16px;padding:14px 22px;box-shadow:0 6px 24px #0008}

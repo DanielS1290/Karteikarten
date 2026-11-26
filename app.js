@@ -11,6 +11,12 @@ if (!settings.repo) settings.repo = 'Karteikarte_data';
 let syncText = settings.token ? '' : 'Sync noch nicht eingerichtet';
 let db = load();
 let filter = '';                             // gewählte Kategorie, '' = alle
+let query = '';                              // Suchbegriff
+const GOAL = 25;                             // richtige Antworten pro Tag
+const SIZES = [10, 25, 33, 50, 0];           // Blockgröße, 0 = alle
+const LEVELS = { 'B2': '#4ade80', 'B3': '#fde047', 'B4': '#f87171', 'Allg.': '#60a5fa' };
+const STREAKS = { 3: '🔥 Läuft, Daniel!', 5: '💪 Fünfer-Pack, sauber!', 10: '🧑‍🚒 Stark, 10 am Stück!', 20: '🏆 Maschine!' };
+const saveLocal = () => { try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch (e) {} };
 
 function load() {
   try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.cards) return d; } catch (e) {}
@@ -22,6 +28,29 @@ function persist() {
   catch (e) { alert('Speichern fehlgeschlagen! Bitte sofort exportieren.'); }
 }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+if (!settings.dev) { settings.dev = uid(); saveLocal(); }
+const levelOf = c => Object.prototype.hasOwnProperty.call(LEVELS, c.level) ? c.level : 'Allg.';
+function levelBadge(c) {
+  const b = el('span', { className: 'level', textContent: levelOf(c) });
+  b.style.color = b.style.borderColor = LEVELS[levelOf(c)];
+  return b;
+}
+// Tagesprotokoll je Gerät, damit der Sync nichts doppelt zählt
+const dayKey = (back = 0) => { const d = new Date(); d.setDate(d.getDate() - back); return d.toLocaleDateString('sv'); };
+function dayTotal(key) {
+  return Object.values((db.log || {})[key] || {}).reduce((s, x) => ({ r: s.r + x.r, w: s.w + x.w }), { r: 0, w: 0 });
+}
+function dayStreak() {
+  let back = dayTotal(dayKey()).r >= GOAL ? 0 : 1, n = 0;
+  while (dayTotal(dayKey(back)).r >= GOAL) { n++; back++; }
+  return n;
+}
+function toast(text) {
+  let box = document.getElementById('toasts');
+  if (!box) { box = el('div', { id: 'toasts' }); document.body.append(box); }
+  const t = el('div', { className: 'toast', textContent: text });
+  box.append(t); setTimeout(() => t.remove(), 2200);
+}
 const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const cats = () => db.categories.filter(c => !c.deleted).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 const cards = (cat = filter) => db.cards.filter(c => !c.deleted && (!cat || c.cat === cat));
@@ -47,7 +76,7 @@ function mdiSvg(name) {
   return svg;
 }
 function iconPicker(c) {
-  const set = name => { c.icon = name; c.updated = Date.now(); save(); cardList(); };
+  const set = name => { c.icon = name; c.updated = Date.now(); save(); catEdit(c.id); };
   return el('div', { className: 'icons' }, btn('–', () => set(''), c.icon ? '' : 'on'),
     Object.keys(MDI).map(name => {
       const b = btn('', () => set(name), c.icon === name ? 'on' : '');
@@ -63,7 +92,7 @@ function badge(id) {
 }
 function colorPicker(c) {
   return el('div', { className: 'swatches' }, COLORS.map(col => {
-    const b = btn('', () => { c.color = col; c.updated = Date.now(); save(); cardList(); }, catColor(c.id) === col ? 'on' : '');
+    const b = btn('', () => { c.color = col; c.updated = Date.now(); save(); catEdit(c.id); }, catColor(c.id) === col ? 'on' : '');
     b.style.background = col; b.setAttribute('aria-label', 'Farbe ' + col);
     return b;
   }));
@@ -93,6 +122,7 @@ function catSelect(value, withAll, onchange) {
 }
 
 function go(view) {
+  query = '';
   if (filter && !cats().some(c => c.id === filter)) filter = '';
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   document.body.classList.toggle('start', view === 'home');
@@ -101,6 +131,7 @@ function go(view) {
 
 /* ---------- Startseite ---------- */
 const ICONS = {
+  home: 'M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10',
   book: 'M12 6C10 4.5 6 4.5 3 5v13c3-.5 7-.5 9 1 2-1.500 6-1.500 9-1V5c-3-.5-7-.5-9 1zM12 6v13',
   folder: 'M3 6a2 2 0 012-2h4l2 3h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2zM3 11h18',
   plus: 'M12 3a9 9 0 100 18 9 9 0 000-18zM12 8v8M8 12h8',
@@ -117,18 +148,35 @@ function greeting() {
   const h = new Date().getHours();
   return `${h < 9 ? 'Moin' : h < 18 ? 'Gude' : 'Abend'} Daniel!`;
 }
+function goalBox() {
+  const done = dayTotal(dayKey()).r, hit = done >= GOAL, streak = dayStreak();
+  const bar = el('div', { className: 'bar' + (hit ? ' hit' : '') }, el('div'));
+  bar.firstChild.style.width = `${Math.min(100, 100 * done / GOAL)}%`;
+  return el('div', { className: 'goal' },
+    el('div', { className: 'progress' }, el('span', { textContent: hit ? 'Tagesziel ✅' : 'Tagesziel' }),
+      el('span', { textContent: `🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}` })),
+    bar,
+    el('div', { className: 'progress' }, el('span', { textContent: hit ? 'Geschafft!' : `Noch ${GOAL - done} richtige` }),
+      el('span', { textContent: `${done} / ${GOAL}` })));
+}
+function percentRight(list) {
+  const r = list.reduce((s, c) => s + prog(c).right, 0), w = list.reduce((s, c) => s + prog(c).wrong, 0);
+  return r + w ? Math.round(100 * r / (r + w)) + ' %' : '–';
+}
 function home() {
+  const all = cards('');
   const tile = (ic, title, sub, fn) => el('button', { type: 'button', className: 'tile', onclick: fn },
     icon(ic), el('strong', { textContent: title }), el('span', { textContent: sub }));
   show(el('div', { className: 'panel' },
     el('div', { className: 'over', textContent: greeting() }),
     el('h1', { textContent: 'Lernzentrum' }),
     el('p', { className: 'muted', textContent: 'Deine persönliche Wissensdatenbank' }),
+    goalBox(),
     el('div', { className: 'tiles' },
-      tile('book', 'Lernen', 'Karteikarten starten', () => go('learn')),
-      tile('folder', 'Kategorien', 'Wissensgebiete', () => go('cats')),
-      tile('plus', 'Neue Karte', 'Fragen erstellen', () => { document.body.classList.remove('start'); editCard(); }),
-      tile('chart', 'Statistik', 'Lernfortschritt', () => go('stats'))),
+      tile('book', 'Lernen', `${all.filter(isDue).length} fällig`, () => go('learn')),
+      tile('folder', 'Kategorien', `${cats().length} Wissensgebiete`, () => go('cats')),
+      tile('plus', 'Neue Karte', `${all.length} Karten`, () => { document.body.classList.remove('start'); editCard(); }),
+      tile('chart', 'Statistik', `${percentRight(all)} richtig`, () => go('stats'))),
     el('button', { type: 'button', className: 'manage', onclick: () => go('data') },
       el('span', {}, el('strong', { textContent: 'Fragenverwaltung' }), el('span', { textContent: 'Importieren, exportieren, bearbeiten' })),
       icon('gear')),
@@ -139,20 +187,45 @@ function home() {
 /* ---------- Lernen ---------- */
 function learn() {
   const all = cards(), due = all.filter(isDue), hard = all.filter(isHard);
-  const b = (text, list, cls) => Object.assign(btn(`${text} (${list.length})`, () => session(shuffle(list)), 'wide ' + (cls || '')), { disabled: !list.length });
+  const size = SIZES.includes(settings.block) ? settings.block : 25;
+  const start = list => { const q = shuffle(list); session(size ? q.slice(0, size) : q); };
+  const b = (text, list, cls) => Object.assign(btn(`${text} (${list.length})`, () => start(list), 'wide ' + (cls || '')), { disabled: !list.length });
   show(el('h2', { textContent: 'Lernen' }),
     catSelect(filter, true, v => { filter = v; learn(); }),
+    el('div', { className: 'small', textContent: 'Karten pro Block' }),
+    el('div', { className: 'chips' }, SIZES.map(n => btn(n || 'alle', () => { settings.block = n; saveLocal(); learn(); }, n === size ? 'on' : ''))),
     b('Fällige Karten', due, 'main'), b('Schwere Karten', hard), b('Alle üben', all),
     !all.length ? el('p', { textContent: 'Hier gibt es noch keine Karten.' }) : null);
   screen = 'learn';
 }
 
 function categoryList() {
-  const row = c => colored(el('div', { className: 'box list', onclick: () => { filter = c.id; go('cards'); } },
-    badge(c.id),
-    el('div', { className: 'small', textContent: `${cards(c.id).length} Karten` })), c.id);
-  show(el('h2', { textContent: 'Kategorien' }), btn('+ Kategorie', addCategory, 'main'), cats().map(row));
+  const row = c => {
+    const list = cards(c.id);
+    const pct = list.length ? Math.round(100 * list.filter(k => prog(k).box >= 4).length / list.length) : 0;
+    const square = el('div', { className: 'square' }, mdi(c.id) || c.name.slice(0, 1).toUpperCase());
+    square.style.background = catColor(c.id); square.style.color = textOn(catColor(c.id));
+    const bar = el('div', { className: 'bar' }, el('div'));
+    bar.firstChild.style.width = pct + '%'; bar.firstChild.style.background = catColor(c.id);
+    const edit = btn('✏️', e => { e.stopPropagation(); catEdit(c.id); }, 'pencil');
+    edit.setAttribute('aria-label', 'Kategorie bearbeiten');
+    return el('div', { className: 'box list catrow', onclick: () => { filter = c.id; go('cards'); } }, square,
+      el('div', { className: 'grow' }, el('strong', { textContent: c.name }), bar,
+        el('div', { className: 'small', textContent: `${list.length} Karten · ${pct} % sitzt` })),
+      edit);
+  };
+  show(el('h2', { textContent: 'Kategorien' }), btn('+ Kategorie', addCategory, 'main'),
+    btn('Alle Karten / Suche', () => { filter = ''; go('cards'); }), cats().map(row));
   screen = 'cats';
+}
+
+function catEdit(id) {
+  const c = db.categories.find(x => x.id === id);
+  show(el('h2', { textContent: 'Kategorie bearbeiten' }), badge(id),
+    el('div', {}, btn('Umbenennen', () => renameCategory(id)), btn('Löschen', () => deleteCategory(id), 'bad')),
+    el('p', { textContent: 'Farbe' }), colorPicker(c),
+    el('p', { textContent: 'Icon' }), iconPicker(c),
+    btn('Fertig', () => go('cats'), 'wide main'));
 }
 
 function rate(card, ok) {
@@ -164,24 +237,33 @@ function rate(card, ok) {
   p.due = ok ? d.getTime() : 0;
   p.last = Date.now();
   card.prog = p;
+  const key = dayKey(), before = dayTotal(key).r;
+  db.log = db.log || {};
+  const day = db.log[key] = db.log[key] || {};
+  const mine = day[settings.dev] = day[settings.dev] || { r: 0, w: 0 };
+  mine[ok ? 'r' : 'w']++;
+  if (ok && before < GOAL && dayTotal(key).r >= GOAL) toast('🎯 Tagesziel geschafft!');
   save();
 }
 
-function session(queue, i = 0, score = 0) {
-  if (i >= queue.length) {
-    return show(el('h2', { textContent: 'Fertig' }),
-      el('div', { className: 'box', textContent: `${score} von ${queue.length} richtig` }),
-      btn('Zurück', () => go('learn'), 'main'));
-  }
-  const card = queue[i];
+function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0, wrong: [], practice: false }) {
+  if (i >= queue.length) return finished(st);
+  const card = db.cards.find(x => x.id === queue[i].id);
+  if (!card || card.deleted) return session(queue, i + 1, st);
   const box = prog(card).box;
   const area = el('div');
   const actions = el('div', { className: 'actions' });
-  let right = false;
+  let answered = false;
   const buttons = (main) => actions.replaceChildren(btn('Abbrechen', () => go('learn')), main);
   const finish = ok => {                     // bewerten, Knopf wird zu „Weiter“
-    right = ok; rate(card, ok);
-    buttons(btn('Weiter', () => session(queue, i + 1, score + (right ? 1 : 0)), 'main'));
+    answered = true;
+    if (!st.practice) rate(card, ok);        // Wiederholung ändert den Lernstand nicht
+    st.answered++;
+    if (ok) { st.score++; st.streak++; st.best = Math.max(st.best, st.streak); }
+    else { st.streak = 0; st.wrong.push(card); }
+    if (ok && STREAKS[st.streak]) toast(STREAKS[st.streak]);
+    if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80, 60, 80]);
+    buttons(btn('Weiter', () => session(queue, i + 1, st), 'main'));
   };
   let check;
 
@@ -231,11 +313,32 @@ function session(queue, i = 0, score = 0) {
   }
   buttons(btn('Prüfen', () => check(), 'main'));
 
+  const edit = btn('✏️', () => {
+    const saved = [...main.children];
+    editCard(card, {}, () => {
+      const now = db.cards.find(x => x.id === card.id);
+      if (now.deleted) return session(queue, i + 1, st);
+      if (!answered) return session(queue, i, st);
+      show(saved); guard = 'Abfrage wirklich abbrechen?';
+    });
+    guard = 'Abfrage wirklich abbrechen?';
+  }, 'pencil');
+  edit.setAttribute('aria-label', 'Karte bearbeiten');
   const bar = el('div', { className: 'bar' }, el('div'));
   bar.firstChild.style.width = `${100 * (i + 1) / queue.length}%`;
-  show(el('div', { className: 'progress' }, el('span', { textContent: `Fach ${box}` }), el('span', { textContent: `${i + 1} / ${queue.length}` })), bar,
-    badge(card.cat), colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, actions);
+  show(el('div', { className: 'progress' }, el('span', { textContent: st.practice ? 'Wiederholung' : `Fach ${box}` }), el('span', { textContent: `${i + 1} / ${queue.length}` })), bar,
+    el('div', { className: 'cardhead' }, el('div', {}, badge(card.cat), ' ', levelBadge(card)), edit),
+    colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, el('div', { className: 'spacer' }), actions);
   guard = 'Abfrage wirklich abbrechen?';
+}
+
+function finished(st) {
+  const pct = st.answered ? Math.round(100 * st.score / st.answered) : 0;
+  const again = st.wrong.slice();
+  show(el('div', { className: 'result' }, el('div', { className: 'pct', textContent: pct + ' %' }),
+      el('div', { textContent: `${st.score} von ${st.answered} richtig · beste Serie: ${st.best}` })),
+    again.length ? btn(`${again.length} falsche nochmal`, () => session(shuffle(again), 0, { answered: 0, score: 0, streak: 0, best: 0, wrong: [], practice: true }), 'wide') : null,
+    btn('Fertig', () => go('learn'), 'wide main'));
 }
 
 // Zahlenvergleich: Komma = Punkt, Einheiten egal, keine Toleranz
@@ -253,41 +356,54 @@ function addCategory() {
   if (!name) return;
   let c = cats().find(x => x.name.toLowerCase() === name.toLowerCase());
   if (!c) { c = { id: uid(), name, color: COLORS[cats().length % COLORS.length], updated: Date.now() }; db.categories.push(c); save(); }
-  filter = c.id; go('cards');
+  catEdit(c.id);
 }
-function renameCategory() {
-  const c = db.categories.find(x => x.id === filter);
+function renameCategory(id) {
+  const c = db.categories.find(x => x.id === id);
   const name = (prompt('Neuer Name', c.name) || '').trim();
   if (!name) return;
   if (cats().some(x => x.id !== c.id && x.name.toLowerCase() === name.toLowerCase())) return alert('Diesen Namen gibt es schon.');
-  c.name = name; c.updated = Date.now(); save(); cardList();
+  c.name = name; c.updated = Date.now(); save(); catEdit(id);
 }
-function deleteCategory() {
-  if (cards(filter).length) return alert('Erst die Karten dieser Kategorie löschen oder verschieben.');
-  const c = db.categories.find(x => x.id === filter);
+function deleteCategory(id) {
+  if (cards(id).length) return alert('Erst die Karten dieser Kategorie löschen oder verschieben.');
+  const c = db.categories.find(x => x.id === id);
   if (!confirm(`Kategorie „${c.name}“ löschen?`)) return;
-  c.deleted = true; c.updated = Date.now(); filter = ''; save(); cardList();
+  c.deleted = true; c.updated = Date.now(); if (filter === id) filter = ''; save(); go('cats');
 }
 
 function cardList() {
-  show(el('h2', { textContent: 'Karten' }),
-    catSelect(filter, true, v => { filter = v; cardList(); }),
-    btn('+ Karte', () => editCard(), 'main'), btn('+ Kategorie', addCategory),
-    filter ? btn('Umbenennen', renameCategory) : null,
-    filter ? btn('Kategorie löschen', deleteCategory) : null,
-    filter ? colorPicker(db.categories.find(x => x.id === filter)) : null,
-    filter ? el('details', {}, el('summary', { textContent: 'Icon wählen' }), iconPicker(db.categories.find(x => x.id === filter))) : null,
-    cards().map(c => colored(el('div', { className: 'box list', onclick: () => editCard(c) }, badge(c.cat),
+  const list = el('div');
+  const text = c => [c.question, c.answer, ...(c.options || []).map(o => o.text), ...(c.items || [])].join(' ').toLowerCase();
+  const draw = () => {
+    const hits = cards().filter(c => text(c).includes(query.trim().toLowerCase()));
+    list.replaceChildren(...hits.map(c => colored(el('div', { className: 'box list', onclick: () => editCard(c) }, badge(c.cat), ' ', levelBadge(c),
       el('div', { textContent: c.question }),
-      el('div', { className: 'small', textContent: `${TYPES[c.type]} · Fach ${prog(c).box}` })), c.cat)));
+      el('div', { className: 'small', textContent: `${TYPES[c.type]} · Fach ${prog(c).box}` })), c.cat)),
+      ...(hits.length ? [] : [el('p', { textContent: 'Keine Karten gefunden.' })]));
+  };
+  const search = el('input', { type: 'search', placeholder: '🔍 Suchen', value: query, oninput: () => { query = search.value; draw(); } });
+  draw();
+  show(el('h2', { textContent: 'Karten' }),
+    catSelect(filter, true, v => { filter = v; cardList(); }), search,
+    btn('+ Karte', () => editCard(), 'main'), list);
   screen = 'cards';
 }
 
-function editCard(card, preset = {}) {
+function editCard(card, preset = {}, done = cardList) {
   if (!cats().length) { alert('Lege zuerst eine Kategorie an.'); return addCategory(); }
   const cat = catSelect(card ? card.cat : preset.cat || filter || cats()[0].id, false);
   const type = el('select', {}, Object.entries(TYPES).map(([v, t]) => el('option', { value: v, textContent: t })));
   type.value = card ? card.type : preset.type || 'free';
+  let level = card ? levelOf(card) : preset.level || settings.level || 'Allg.';
+  const levels = el('div', { className: 'chips' });
+  const drawLevels = () => levels.replaceChildren(...Object.entries(LEVELS).map(([name, color]) => {
+    const b = btn(name, () => { level = name; drawLevels(); levels.dispatchEvent(new Event('change', { bubbles: true })); }, name === level ? 'on' : '');
+    b.style.borderColor = color;
+    if (name === level) { b.style.background = color; b.style.color = '#111'; } else b.style.color = color;
+    return b;
+  }));
+  drawLevels();
   const q = el('textarea', { value: card ? card.question : '' });
   const answer = el('textarea', { value: card && card.answer || '' });
   const items = el('textarea', { value: card && card.items ? card.items.join('\n') : '' });
@@ -310,7 +426,7 @@ function editCard(card, preset = {}) {
   type.onchange();
 
   const submit = () => {
-    const data = { cat: cat.value, type: type.value, question: q.value.trim() };
+    const data = { cat: cat.value, type: type.value, level, question: q.value.trim() };
     if (!data.question) return alert('Die Frage fehlt.');
     if (data.type === 'free') {
       data.answer = answer.value.trim();
@@ -323,18 +439,19 @@ function editCard(card, preset = {}) {
       if (data.items.length < 2) return alert('Mindestens 2 Zeilen.');
     }
     data.updated = Date.now();
+    settings.level = level; saveLocal();
     if (card) Object.assign(db.cards.find(x => x.id === card.id), data); else db.cards.push({ id: uid(), ...data });
     save();
-    if (card) cardList(); else { editCard(null, data); }   // direkt die nächste Karte
+    if (card) done(); else { editCard(null, data); }   // direkt die nächste Karte
   };
 
   show(el('h2', { textContent: card ? 'Karte bearbeiten' : 'Neue Karte' }),
-    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Typ', type, 'Frage', q, Object.values(parts)),
+    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Niveau', levels, 'Typ', type, 'Frage', q, Object.values(parts)),
     btn(card ? 'Speichern' : 'Speichern & nächste', submit, 'main'),
-    btn('Zurück', cardList),
+    btn('Zurück', () => done()),
     card ? btn('Löschen', () => {
       if (!confirm('Karte löschen?')) return;
-      Object.assign(db.cards.find(x => x.id === card.id), { deleted: true, updated: Date.now() }); save(); cardList();
+      Object.assign(db.cards.find(x => x.id === card.id), { deleted: true, updated: Date.now() }); save(); done();
     }, 'bad') : null);
 }
 
@@ -350,7 +467,7 @@ const exitBox = el('div', { className: 'overlay', hidden: true }, el('div', { cl
   btn('Hier bleiben', () => {}, 'wide main')));
 document.body.append(exitBox);
 const arm = () => { if (!history.state) history.pushState({ app: 1 }, ''); };
-document.addEventListener('click', () => { exitBox.hidden = true; arm(); });
+document.addEventListener('click', () => { exitBox.hidden = true; arm(); }, true);
 window.addEventListener('popstate', e => {
   if (e.state) return;
   if (document.body.classList.contains('start')) { exitBox.hidden = false; return; }
@@ -366,7 +483,17 @@ function stats() {
       r + w ? Math.round(100 * r / (r + w)) + ' %' : '–'].map(v => el('td', { textContent: v })));
   };
   const all = cards('');
+  const days = [...Array(14).keys()].reverse().map(back => ({ key: dayKey(back), ...dayTotal(dayKey(back)) }));
+  const max = Math.max(1, ...days.map(d => d.r + d.w));
+  const column = d => {
+    const part = (n, cls) => { const e = el('div', { className: cls }); e.style.height = `${110 * n / max}px`; return e; };
+    return el('div', { className: 'col', title: `${d.key}: ${d.r} richtig, ${d.w} falsch` },
+      el('span', { textContent: d.r + d.w || '' }), part(d.w, 'w'), part(d.r, 'r'), el('span', { textContent: d.key.slice(8) }));
+  };
   show(el('h2', { textContent: 'Statistik' }),
+    el('div', { className: 'box list' }, el('strong', { textContent: 'Letzte 14 Tage' }),
+      el('div', { className: 'chart' }, days.map(column)),
+      el('div', { className: 'small', textContent: '🟩 richtig · 🟥 falsch' })),
     el('div', { className: 'box list' }, el('table', {},
       el('tr', {}, ['Kategorie', 'Karten', 'Fällig', 'Schwer', 'Richtig'].map(v => el('th', { textContent: v }))),
       cats().map(c => line(c.name, cards(c.id))), line('Gesamt', all))),
@@ -425,6 +552,17 @@ function merge(inc) {
     if (newer || p !== own.prog) changed++;
     db.cards[i] = { ...(newer ? c : own), prog: p };
   }
+  const safe = k => !['__proto__', 'constructor', 'prototype'].includes(k);
+  for (const [key, devs] of Object.entries(inc.log || {})) {
+    if (!/^\d{4}-\d\d-\d\d$/.test(key)) continue;
+    db.log = db.log || {};
+    const day = db.log[key] = db.log[key] || {};
+    for (const [dev, x] of Object.entries(devs || {})) {
+      if (!safe(dev)) continue;
+      const own = day[dev] || { r: 0, w: 0 };     // je Gerät gilt der höhere Stand
+      day[dev] = { r: Math.max(own.r, Number(x.r) || 0), w: Math.max(own.w, Number(x.w) || 0) };
+    }
+  }
   // Kategorien mit noch vorhandenen Karten dürfen nicht gelöscht bleiben
   for (const c of db.categories) if (c.deleted && cards(c.id).length) { c.deleted = false; c.updated = Date.now(); }
   persist();
@@ -479,7 +617,7 @@ function canon(d) {
   const sorted = v => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object'
     ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sorted(v[k])])) : v;
   const byId = (a, b) => a.id < b.id ? -1 : 1;
-  return JSON.stringify(sorted({ version: 1, categories: [...d.categories].sort(byId), cards: [...d.cards].sort(byId) }), null, 1);
+  return JSON.stringify(sorted({ version: 1, categories: [...d.categories].sort(byId), cards: [...d.cards].sort(byId), log: d.log || {} }), null, 1);
 }
 const toB64 = t => { let s = ''; new TextEncoder().encode(t).forEach(x => s += String.fromCharCode(x)); return btoa(s); };
 const fromB64 = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
@@ -529,7 +667,7 @@ async function sync(manual) {
   try {
     await syncOnce();
     setStatus('Synchronisiert um ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
-    if (screen) ({ home, learn, cats: categoryList, cards: cardList, stats })[screen]();   // nie ein Formular oder eine Abfrage stören
+    if (screen && document.activeElement?.type !== 'search') ({ home, learn, cats: categoryList, cards: cardList, stats })[screen]();   // nie ein Formular oder eine Abfrage stören
   } catch (e) {
     setStatus('Sync fehlgeschlagen: ' + e.message);
     if (manual) alert('Sync fehlgeschlagen: ' + e.message);
@@ -540,7 +678,8 @@ async function sync(manual) {
 window.addEventListener('online', () => sync());
 document.addEventListener('visibilitychange', () => sync());
 
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => go(b.dataset.view));
+const NAVICONS = { home: 'home', learn: 'book', cats: 'folder', stats: 'chart' };
+document.querySelectorAll('nav button').forEach(b => { b.prepend(icon(NAVICONS[b.dataset.view])); b.onclick = () => go(b.dataset.view); });
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 go('home');
