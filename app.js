@@ -271,6 +271,7 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     const nums = numbers(card.answer);
     const input = el('input', { className: 'answer', placeholder: 'Deine Antwort', autocomplete: 'off', inputMode: nums.length === 1 ? 'decimal' : 'text' });
     const solution = el('div');
+    if (nums.length) thousands(input);
     check = () => {
       const ok = matches(input.value, card.answer);
       input.readOnly = true; input.classList.add(ok ? 'right' : 'wrong');
@@ -315,7 +316,7 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
 
   const edit = btn('✏️', () => {
     const saved = [...main.children];
-    editCard(card, {}, () => {
+    editCard(card, { hideAnswers: true }, () => {
       const now = db.cards.find(x => x.id === card.id);
       if (now.deleted) return session(queue, i + 1, st);
       if (!answered) return session(queue, i, st);
@@ -328,7 +329,7 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
   bar.firstChild.style.width = `${100 * (i + 1) / queue.length}%`;
   show(el('div', { className: 'progress' }, el('span', { textContent: st.practice ? 'Wiederholung' : `Fach ${box}` }), el('span', { textContent: `${i + 1} / ${queue.length}` })), bar,
     el('div', { className: 'cardhead' }, el('div', {}, badge(card.cat), ' ', levelBadge(card)), edit),
-    colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, el('div', { className: 'spacer' }), actions);
+    colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, actions);
   guard = 'Abfrage wirklich abbrechen?';
 }
 
@@ -341,8 +342,32 @@ function finished(st) {
     btn('Fertig', () => go('learn'), 'wide main'));
 }
 
-// Zahlenvergleich: Komma = Punkt, Einheiten egal, keine Toleranz
-const numbers = t => (String(t).match(/(?:(?<![\d.,])-)?\d+(?:[.,]\d+)?/g) || []).map(n => Number(n.replace(',', '.')));
+// Zahlenvergleich: Komma = Dezimalzeichen, Punkt in 3er-Gruppen = Tausender, keine Toleranz
+const NUMBER = /(?:(?<![\d.,])-)?(?:[1-9]\d{0,2}(?:\.\d{3})+(?!\d)|\d+)(?:[.,]\d+)?/g;
+const numbers = t => (String(t).match(NUMBER) || []).map(n =>
+  Number((/^-?[1-9]\d{0,2}(\.\d{3})+(,\d+)?$/.test(n) ? n.replace(/\./g, '') : n).replace(',', '.')));
+const group = t => t.replace(/(\d+)(,\d*)?/g, (m, int, dec = '') =>
+  (int[0] === '0' ? int : int.replace(/\B(?=(\d{3})+$)/g, '.')) + dec);
+
+// Beim Tippen Tausenderpunkte setzen; ein selbst getippter Punkt wird zum Komma
+function thousands(input) {
+  let last = input.value;
+  input.addEventListener('input', e => {
+    let v = input.value, pos = input.selectionStart ?? v.length;
+    const type = e.inputType || '';
+    if (type === 'insertFromPaste') { last = v; return; }
+    if (type.startsWith('insert') && v[pos - 1] === '.') v = v.slice(0, pos - 1) + ',' + v.slice(pos);
+    // Rücktaste auf einem Tausenderpunkt löscht die Ziffer davor
+    if (type === 'deleteContentBackward' && last[pos] === '.' && v.replace(/\./g, '') === last.replace(/\./g, '')) {
+      v = v.slice(0, pos - 1) + v.slice(pos); pos--;
+    }
+    const keep = v.slice(0, pos).replace(/\./g, '').length;
+    input.value = last = group(v.replace(/\./g, ''));
+    let p = 0;
+    for (let n = 0; p < input.value.length && n < keep; p++) if (input.value[p] !== '.') n++;
+    input.setSelectionRange(p, p);
+  });
+}
 function matches(given, expected) {
   const want = numbers(expected), got = numbers(given);
   if (want.length) return got.length === want.length && want.every((n, k) => n === got[k]);
@@ -446,7 +471,9 @@ function editCard(card, preset = {}, done = cardList) {
   };
 
   show(el('h2', { textContent: card ? 'Karte bearbeiten' : 'Neue Karte' }),
-    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Niveau', levels, 'Typ', type, 'Frage', q, Object.values(parts)),
+    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Niveau', levels, 'Typ', type, 'Frage', q, preset.hideAnswers
+      ? el('details', {}, el('summary', { textContent: 'Antworten anzeigen' }), Object.values(parts))
+      : Object.values(parts)),
     btn(card ? 'Speichern' : 'Speichern & nächste', submit, 'main'),
     btn('Zurück', () => done()),
     card ? btn('Löschen', () => {
