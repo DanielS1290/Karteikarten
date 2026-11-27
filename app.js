@@ -1,4 +1,8 @@
 'use strict';
+// ===== Hier anpassen =====
+const EXAM_DATE = '2027-10-01';              // Prüfungstag (Jahr-Monat-Tag)
+const EXAM_NAME = 'B4 Auswahl';
+// =========================
 const KEY = 'karteikarten.v1';
 const DAYS = [0, 0, 2, 4, 9, 21];            // Wartezeit je Fach 1..5
 const TYPES = { free: 'Freitext', choice: 'Auswahl', order: 'Reihenfolge' };
@@ -84,6 +88,13 @@ function iconPicker(c) {
       return b;
     }));
 }
+function pencilIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg'), path = document.createElementNS(ns, 'path');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'mdi');
+  path.setAttribute('d', 'M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z');
+  svg.append(path); return svg;
+}
 function colored(node, id) { node.style.borderLeft = '8px solid ' + catColor(id); return node; }
 function badge(id) {
   const b = el('span', { className: 'badge' }, mdi(id), catName(id));
@@ -111,7 +122,13 @@ function el(tag, props = {}, ...kids) {
 const btn = (text, fn, cls = '') => el('button', { type: 'button', textContent: text, className: cls, onclick: fn });
 let screen = '';
 let guard = '';                              // Rückfrage bei laufender Abfrage / ungespeicherten Eingaben
-const show = (...nodes) => { screen = ''; guard = ''; main.replaceChildren(...nodes.flat().filter(Boolean)); window.scrollTo(0, 0); };
+let back = null;                             // Ziel der Zurück-Taste, null = Startseite
+const show = (...nodes) => {
+  screen = ''; guard = ''; back = null;
+  main.replaceChildren(...nodes.flat().filter(Boolean));
+  main.classList.remove('fade'); void main.offsetWidth; main.classList.add('fade');
+  window.scrollTo(0, 0);
+};
 
 function catSelect(value, withAll, onchange) {
   const s = el('select', { onchange: () => onchange && onchange(s.value) },
@@ -148,10 +165,23 @@ function greeting() {
   const h = new Date().getHours();
   return `${h < 9 ? 'Moin' : h < 18 ? 'Gude' : 'Abend'} Daniel!`;
 }
+function countdown() {
+  const [y, m, d] = EXAM_DATE.split('-').map(Number), now = new Date();
+  const days = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+  if (days < 0) return null;
+  return `Vorbereitung zur ${EXAM_NAME} ${days === 0 ? 'heute' : `in ${days} ${days === 1 ? 'Tag' : 'Tagen'}`}`;
+}
+// Balken gleitet vom alten zum neuen Wert
+function barNode(pct, from = 0, cls = '') {
+  const bar = el('div', { className: 'bar ' + cls }, el('div'));
+  bar.firstChild.style.width = from + '%';
+  requestAnimationFrame(() => requestAnimationFrame(() => bar.firstChild.style.width = pct + '%'));
+  return bar;
+}
 function goalBox() {
   const done = dayTotal(dayKey()).r, hit = done >= GOAL, streak = dayStreak();
-  const bar = el('div', { className: 'bar' + (hit ? ' hit' : '') }, el('div'));
-  bar.firstChild.style.width = `${Math.min(100, 100 * done / GOAL)}%`;
+  const share = Math.min(1, done / GOAL);
+  const bar = barNode(100 * share, 0, hit ? 'hit' : share >= 0.5 ? 'half' : '');
   return el('div', { className: 'goal' },
     el('div', { className: 'progress' }, el('span', { textContent: hit ? 'Tagesziel ✅' : 'Tagesziel' }),
       el('span', { textContent: `🔥 ${streak} ${streak === 1 ? 'Tag' : 'Tage'}` })),
@@ -168,14 +198,13 @@ function home() {
   const tile = (ic, title, sub, fn) => el('button', { type: 'button', className: 'tile', onclick: fn },
     icon(ic), el('strong', { textContent: title }), el('span', { textContent: sub }));
   show(el('div', { className: 'panel' },
-    el('div', { className: 'over', textContent: greeting() }),
-    el('h1', { textContent: 'Lernzentrum' }),
-    el('p', { className: 'muted', textContent: 'Deine persönliche Wissensdatenbank' }),
+    el('h1', { textContent: greeting() }),
+    countdown() ? el('p', { className: 'muted', textContent: countdown() }) : null,
     goalBox(),
     el('div', { className: 'tiles' },
       tile('book', 'Lernen', `${all.filter(isDue).length} fällig`, () => go('learn')),
       tile('folder', 'Kategorien', `${cats().length} Wissensgebiete`, () => go('cats')),
-      tile('plus', 'Neue Karte', `${all.length} Karten`, () => { document.body.classList.remove('start'); editCard(); }),
+      tile('plus', 'Neue Karte', `${all.length} Karten`, () => { document.body.classList.remove('start'); editCard(null, {}, () => go('home')); }),
       tile('chart', 'Statistik', `${percentRight(all)} richtig`, () => go('stats'))),
     el('button', { type: 'button', className: 'manage', onclick: () => go('data') },
       el('span', {}, el('strong', { textContent: 'Fragenverwaltung' }), el('span', { textContent: 'Importieren, exportieren, bearbeiten' })),
@@ -191,7 +220,13 @@ function learn() {
   const start = list => { const q = shuffle(list); session(size ? q.slice(0, size) : q); };
   const b = (text, list, cls) => Object.assign(btn(`${text} (${list.length})`, () => start(list), 'wide ' + (cls || '')), { disabled: !list.length });
   show(el('h2', { textContent: 'Lernen' }),
-    catSelect(filter, true, v => { filter = v; learn(); }),
+    el('div', { className: 'cattiles' }, [{ id: '', name: 'Alle' }, ...cats()].map(c => {
+      const b = btn('', () => { filter = c.id; learn(); }, filter === c.id ? 'on' : '');
+      const color = c.id ? catColor(c.id) : '#3a3f47';
+      b.append(c.id && mdi(c.id) || '', el('span', { textContent: c.name }), el('small', { textContent: `${cards(c.id).length}` }));
+      b.style.background = color; b.style.color = c.id ? textOn(color) : '#fff';
+      return b;
+    })),
     el('div', { className: 'small', textContent: 'Karten pro Block' }),
     el('div', { className: 'chips' }, SIZES.map(n => btn(n || 'alle', () => { settings.block = n; saveLocal(); learn(); }, n === size ? 'on' : ''))),
     b('Fällige Karten', due, 'main'), b('Schwere Karten', hard), b('Alle üben', all),
@@ -207,7 +242,8 @@ function categoryList() {
     square.style.background = catColor(c.id); square.style.color = textOn(catColor(c.id));
     const bar = el('div', { className: 'bar' }, el('div'));
     bar.firstChild.style.width = pct + '%'; bar.firstChild.style.background = catColor(c.id);
-    const edit = btn('✏️', e => { e.stopPropagation(); catEdit(c.id); }, 'pencil');
+    const edit = btn('', e => { e.stopPropagation(); catEdit(c.id); }, 'pencil');
+    edit.append(pencilIcon());
     edit.setAttribute('aria-label', 'Kategorie bearbeiten');
     return el('div', { className: 'box list catrow', onclick: () => { filter = c.id; go('cards'); } }, square,
       el('div', { className: 'grow' }, el('strong', { textContent: c.name }), bar,
@@ -226,6 +262,7 @@ function catEdit(id) {
     el('p', { textContent: 'Farbe' }), colorPicker(c),
     el('p', { textContent: 'Icon' }), iconPicker(c),
     btn('Fertig', () => go('cats'), 'wide main'));
+  back = () => go('cats');
 }
 
 function rate(card, ok) {
@@ -275,17 +312,22 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     check = () => {
       const ok = matches(input.value, card.answer);
       input.readOnly = true; input.classList.add(ok ? 'right' : 'wrong');
+      input.value = (ok ? '✓ ' : '✗ ') + input.value;
       if (!ok) solution.replaceChildren(el('div', { className: 'opt right', textContent: card.answer }));
       finish(ok);
     };
     input.onkeydown = e => { if (e.key === 'Enter' && !input.readOnly) { e.preventDefault(); check(); } };
     area.append(input, solution);
   } else if (card.type === 'choice') {
+    const single = card.options.filter(o => o.ok).length === 1;
     const opts = shuffle(card.options).map(o => {
-      const b = btn(o.text, () => b.classList.toggle('sel'), 'opt');
+      const b = btn(o.text, () => {
+        if (single) opts.forEach(x => { if (x.b !== b) x.b.classList.remove('sel'); });
+        b.classList.toggle('sel');
+      }, 'opt');
       return { o, b };
     });
-    area.append(el('p', { className: 'small', textContent: 'Mehrere Antworten können richtig sein.' }), ...opts.map(x => x.b));
+    area.append(el('p', { className: 'small', textContent: single ? 'Eine Antwort ist richtig.' : 'Mehrere Antworten sind richtig.' }), ...opts.map(x => x.b));
     check = () => {
       const ok = opts.every(x => x.b.classList.contains('sel') === x.o.ok);
       opts.forEach(x => {
@@ -299,22 +341,49 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     for (let n = 0; n < 10 && items.join('\n') === card.items.join('\n'); n++) items = shuffle(card.items);
     const list = el('div');
     let checked = false;
-    const move = (k, d) => { [items[k], items[k + d]] = [items[k + d], items[k]]; draw(); };
     const draw = () => list.replaceChildren(...items.map((t, k) => {
       const ok = t === card.items[k];
-      return el('div', { className: 'row' },
-        el('div', { className: 'opt grow' + (checked ? (ok ? ' right' : ' wrong') : '') }, `${k + 1}. ${t}`,
-          checked && !ok ? el('div', { className: 'small', textContent: `gehört auf ${card.items.indexOf(t) + 1}` }) : null),
-        checked ? null : Object.assign(btn('▲', () => move(k, -1)), { disabled: k === 0 }),
-        checked ? null : Object.assign(btn('▼', () => move(k, 1)), { disabled: k === items.length - 1 }));
+      const row = el('div', { className: 'opt sortrow' + (checked ? (ok ? ' right' : ' wrong') : '') },
+        el('div', { className: 'grow' }, `${k + 1}. ${t}`,
+          checked && !ok ? el('div', { className: 'small', textContent: `gehört auf ${card.items.indexOf(t) + 1}` }) : null));
+      if (!checked) row.append(handle(row));
+      row.dataset.text = t;
+      return row;
     }));
+    // Zeile am Griff ziehen (Finger oder Maus)
+    const handle = row => {
+      const h = el('div', { className: 'handle', textContent: '≡' });
+      h.setAttribute('aria-label', 'Verschieben');
+      h.onpointerdown = e => {
+        e.preventDefault();
+        row.classList.add('drag');
+        let startY = e.clientY;
+        const move = ev => {
+          const prev = row.previousElementSibling, next = row.nextElementSibling;
+          const mid = n => { const r = n.getBoundingClientRect(); return r.top + r.height / 2; };
+          const top = row.offsetTop;
+          if (prev && ev.clientY < mid(prev)) { list.insertBefore(row, prev); startY += row.offsetTop - top; }
+          else if (next && ev.clientY > mid(next)) { list.insertBefore(next, row); startY += row.offsetTop - top; }
+          row.style.transform = `translateY(${ev.clientY - startY}px)`;
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+          items = [...list.children].map(n => n.dataset.text);
+          draw();
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+      };
+      return h;
+    };
     draw();
     area.append(list);
     check = () => { checked = true; draw(); finish(items.every((t, k) => t === card.items[k])); };
   }
   buttons(btn('Prüfen', () => check(), 'main'));
 
-  const edit = btn('✏️', () => {
+  const edit = btn('', () => {
     const saved = [...main.children];
     editCard(card, { hideAnswers: true }, () => {
       const now = db.cards.find(x => x.id === card.id);
@@ -325,8 +394,8 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     guard = 'Abfrage wirklich abbrechen?';
   }, 'pencil');
   edit.setAttribute('aria-label', 'Karte bearbeiten');
-  const bar = el('div', { className: 'bar' }, el('div'));
-  bar.firstChild.style.width = `${100 * (i + 1) / queue.length}%`;
+  edit.append(pencilIcon());
+  const bar = barNode(100 * (i + 1) / queue.length, 100 * i / queue.length);
   show(el('div', { className: 'progress' }, el('span', { textContent: st.practice ? 'Wiederholung' : `Fach ${box}` }), el('span', { textContent: `${i + 1} / ${queue.length}` })), bar,
     el('div', { className: 'cardhead' }, el('div', {}, badge(card.cat), ' ', levelBadge(card)), edit),
     colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, actions);
@@ -336,7 +405,10 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
 function finished(st) {
   const pct = st.answered ? Math.round(100 * st.score / st.answered) : 0;
   const again = st.wrong.slice();
-  show(el('div', { className: 'result' }, el('div', { className: 'pct', textContent: pct + ' %' }),
+  const ring = el('div', { className: 'ring' }, el('div', { className: 'pct', textContent: pct + ' %' }));
+  const color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#eab308' : '#ef4444';
+  ring.style.background = `conic-gradient(${color} ${pct}%, var(--card) 0)`;
+  show(el('div', { className: 'result' }, ring,
       el('div', { textContent: `${st.score} von ${st.answered} richtig · beste Serie: ${st.best}` })),
     again.length ? btn(`${again.length} falsche nochmal`, () => session(shuffle(again), 0, { answered: 0, score: 0, streak: 0, best: 0, wrong: [], practice: true }), 'wide') : null,
     btn('Fertig', () => go('learn'), 'wide main'));
@@ -411,8 +483,9 @@ function cardList() {
   draw();
   show(el('h2', { textContent: 'Karten' }),
     catSelect(filter, true, v => { filter = v; cardList(); }), search,
-    btn('+ Karte', () => editCard(), 'main'), list);
+    btn('+ Karte', () => editCard(null), 'main'), list);
   screen = 'cards';
+  back = () => go('cats');
 }
 
 function editCard(card, preset = {}, done = cardList) {
@@ -467,7 +540,7 @@ function editCard(card, preset = {}, done = cardList) {
     settings.level = level; saveLocal();
     if (card) Object.assign(db.cards.find(x => x.id === card.id), data); else db.cards.push({ id: uid(), ...data });
     save();
-    if (card) done(); else { editCard(null, data); }   // direkt die nächste Karte
+    if (card) done(); else { editCard(null, data, done); }   // direkt die nächste Karte
   };
 
   show(el('h2', { textContent: card ? 'Karte bearbeiten' : 'Neue Karte' }),
@@ -480,6 +553,7 @@ function editCard(card, preset = {}, done = cardList) {
       if (!confirm('Karte löschen?')) return;
       Object.assign(db.cards.find(x => x.id === card.id), { deleted: true, updated: Date.now() }); save(); done();
     }, 'bad') : null);
+  back = () => done();
 }
 
 // Eingaben im Kartenformular merken
@@ -498,7 +572,7 @@ document.addEventListener('click', () => { exitBox.hidden = true; arm(); }, true
 window.addEventListener('popstate', e => {
   if (e.state) return;
   if (document.body.classList.contains('start')) { exitBox.hidden = false; return; }
-  if (!guard || confirm(guard)) go('home');
+  if (!guard || confirm(guard)) (back || (() => go('home')))();
   history.forward();
 });
 
@@ -525,8 +599,12 @@ function stats() {
       el('tr', {}, ['Kategorie', 'Karten', 'Fällig', 'Schwer', 'Richtig'].map(v => el('th', { textContent: v }))),
       cats().map(c => line(c.name, cards(c.id))), line('Gesamt', all))),
     el('h2', { textContent: 'Lernfächer' }),
-    el('div', { className: 'box list' }, [1, 2, 3, 4, 5].map(n =>
-      el('div', { textContent: `Fach ${n}: ${all.filter(c => prog(c).box === n).length} Karten` }))));
+    el('div', { className: 'box list' }, [1, 2, 3, 4, 5].map(n => {
+      const count = all.filter(c => prog(c).box === n).length;
+      const pct = all.length ? Math.round(100 * count / all.length) : 0;
+      return el('div', { className: 'boxrow' }, el('span', { textContent: `Fach ${n}` }), barNode(pct),
+        el('span', { textContent: `${count} · ${pct} %` }));
+    })));
   screen = 'stats';
 }
 
@@ -620,10 +698,105 @@ sync();
   };
   show(el('h2', { textContent: 'Fragenverwaltung' }),
     btn('Karten bearbeiten', () => { filter = ''; go('cards'); }, 'wide main'),
+    importBox(),
     el('div', { className: 'box form' }, fields.map(f => f.node), btn('Speichern & synchronisieren', saveSettings, 'main'),
       el('p', { className: 'small status', textContent: syncText })),
     el('div', { className: 'box form' }, el('p', { textContent: 'Backup: alle Karten und Lernstand als Datei.' }), btn('Exportieren', exportData, 'main')),
     el('div', { className: 'box form' }, el('p', { textContent: 'Import führt zusammen. Bei Änderungen an derselben Karte gilt die neuere, auch beim Löschen.' }), file));
+}
+
+/* ---------- Import aus Excel (kopieren und einfügen) ---------- */
+// Excel kopiert tabgetrennt; Zellen mit Sonderzeichen stehen in Anführungszeichen
+function parseTable(text) {
+  const rows = [[]];
+  let cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === '\t') { rows.at(-1).push(cell); cell = ''; }
+    else if (ch === '\n') { rows.at(-1).push(cell); cell = ''; rows.push([]); }
+    else if (ch !== '\r') cell += ch;
+  }
+  rows.at(-1).push(cell);
+  return rows;
+}
+const IMPORT_TYPES = { frei: 'free', freitext: 'free', auswahl: 'choice', ordnen: 'order', reihenfolge: 'order' };
+function readImport(text) {
+  const rows = parseTable(text);
+  let col = { cat: 0, level: 1, type: 2, q: 3, answers: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }, start = 0;
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  const find = re => head.findIndex(h => re.test(h));
+  if (find(/^kategorie/) >= 0 && find(/^frage$/) >= 0) {   // Kopfzeile mitkopiert: Spalten danach zuordnen
+    col = { cat: find(/^kategorie/), level: find(/^niveau/), type: find(/typ/), q: find(/^frage$/),
+      answers: head.map((h, i) => /antwort/.test(h) ? i : -1).filter(i => i >= 0) };
+    start = 1;
+  }
+  const good = [], bad = [];
+  rows.slice(start).forEach((r, n) => {
+    if (r.every(c => !c.trim())) return;
+    const get = i => (r[i] || '').trim();
+    const line = n + start + 1, cat = get(col.cat), question = get(col.q);
+    const type = IMPORT_TYPES[get(col.type).toLowerCase()];
+    const lv = get(col.level).toLowerCase();
+    const level = !lv || lv.startsWith('allg') ? 'Allg.' : Object.keys(LEVELS).find(k => k.toLowerCase() === lv);
+    const answers = col.answers.map(get).filter(Boolean);
+    const err = text => bad.push(`Zeile ${line}: ${text}`);
+    if (!cat) return err('Kategorie fehlt');
+    if (!question) return err('Frage fehlt');
+    if (!type) return err('Typ unbekannt');
+    if (!level) return err('Niveau unbekannt');
+    const card = { type, level, question };
+    if (type === 'free') {
+      if (!answers.length) return err('Antwort fehlt');
+      card.answer = answers[0];
+    } else if (type === 'choice') {
+      card.options = answers.map(a => ({ ok: a.startsWith('*'), text: a.replace(/^\*\s*/, '') })).filter(o => o.text);
+      if (card.options.length < 2 || !card.options.some(o => o.ok)) return err('mind. 2 Antworten, richtige mit *');
+    } else {
+      if (answers.length < 2) return err('mind. 2 Antworten');
+      card.items = answers;
+    }
+    good.push({ cat, card });
+  });
+  return { good, bad };
+}
+// Gleiche Frage in gleicher Kategorie: die importierte gewinnt, der Lernstand bleibt
+function applyImport(list) {
+  const norm = t => t.trim().replace(/\s+/g, ' ').toLowerCase();
+  let added = 0, changed = 0;
+  for (const { cat, card } of list) {
+    let c = cats().find(x => norm(x.name) === norm(cat));
+    if (!c) { c = { id: uid(), name: cat, color: COLORS[cats().length % COLORS.length], updated: Date.now() }; db.categories.push(c); }
+    const own = db.cards.find(x => !x.deleted && x.cat === c.id && norm(x.question) === norm(card.question));
+    const sig = k => JSON.stringify([k.type, levelOf(k), k.question,
+      k.type === 'free' ? k.answer : k.type === 'choice' ? k.options.map(o => [o.text, !!o.ok]) : k.items]);
+    const same = own && sig(own) === sig(card);
+    if (same) continue;
+    if (own) { delete own.answer; delete own.options; delete own.items; Object.assign(own, card, { updated: Date.now() }); changed++; }
+    else { db.cards.push({ id: uid(), cat: c.id, ...card, updated: Date.now() }); added++; }
+  }
+  save();
+  return { added, changed };
+}
+function importBox() {
+  const area = el('textarea', { placeholder: 'Zeilen in Excel kopieren und hier einfügen' });
+  const out = el('div');
+  const check = () => {
+    const { good, bad } = readImport(area.value);
+    out.replaceChildren(el('p', { textContent: `${good.length} Karten bereit, ${bad.length} fehlerhafte Zeilen` }),
+      ...bad.slice(0, 15).map(t => el('div', { className: 'small', textContent: t })),
+      ...good.slice(0, 3).map(g => el('div', { className: 'small', textContent: `✓ ${g.cat}: ${g.card.question}` })),
+      good.length ? btn(`${good.length} Karten importieren`, () => {
+        const r = applyImport(good);
+        area.value = ''; out.replaceChildren(el('p', { textContent: `Fertig: ${r.added} neu, ${r.changed} aktualisiert.` }));
+      }, 'main') : '');
+  };
+  area.oninput = () => out.replaceChildren();
+  return el('div', { className: 'box form' }, el('strong', { textContent: 'Aus Excel einfügen' }), area, btn('Prüfen', check, 'main'), out);
 }
 
 /* ---------- Sync über privates GitHub-Repository ---------- */

@@ -1,5 +1,5 @@
-const CACHE = 'karteikarten-7';
-const FILES = ['./', 'index.html', 'style.css', 'icons.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'karteikarten-8';
+const FILES = ['./', 'index.html', 'style.css', 'icons.js', 'rubik.woff2', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys()
   .then(k => Promise.all(k.filter(n => n.startsWith('karteikarten-') && n !== CACHE).map(n => caches.delete(n))))
