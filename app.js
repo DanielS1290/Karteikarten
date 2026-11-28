@@ -5,7 +5,7 @@ const EXAM_NAME = 'B4 Auswahl';
 // =========================
 const KEY = 'karteikarten.v1';
 const DAYS = [0, 0, 2, 4, 9, 21];            // Wartezeit je Fach 1..5
-const TYPES = { free: 'Freitext', choice: 'Auswahl', order: 'Reihenfolge' };
+const TYPES = { free: 'Freitext', choice: 'Auswahl', order: 'Reihenfolge', gap: 'Lückentext', match: 'Zuordnen' };
 const main = document.getElementById('main');
 
 const SKEY = 'karteikarten.settings';       // nur lokal, nie im Export
@@ -59,9 +59,10 @@ const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.get
 const cats = () => db.categories.filter(c => !c.deleted).sort((a, b) => a.name.localeCompare(b.name, 'de'));
 const cards = (cat = filter) => db.cards.filter(c => !c.deleted && (!cat || c.cat === cat));
 const catName = id => (db.categories.find(c => c.id === id) || {}).name || '–';
-const COLORS = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#00d5e8', '#1e4fd8', '#e91eaa', '#8d5a3b', '#f5f5f5'];
+const COLORS = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#00d5e8', '#1e4fd8', '#e91eaa', '#8d5a3b', '#f5f5f5',
+  '#8e24aa', '#a3e635', '#0f766e', '#7f1d1d', '#fda4af', '#6b7280', '#d4a017'];
 const OLD_COLORS = { '#ef4444': 0, '#f97316': 1, '#eab308': 2, '#22c55e': 3, '#14b8a6': 4, '#3b82f6': 5, '#8b5cf6': 6, '#ec4899': 6 };
-const textOn = col => ['#e53935', '#1e4fd8', '#e91eaa', '#8d5a3b'].includes(col) ? '#fff' : '#111';
+const textOn = col => ['#e53935', '#1e4fd8', '#e91eaa', '#8d5a3b', '#8e24aa', '#0f766e', '#7f1d1d', '#6b7280'].includes(col) ? '#fff' : '#111';
 function catColor(id) {
   const c = db.categories.find(x => x.id === id);
   if (c && COLORS.includes(c.color)) return c.color;
@@ -303,6 +304,7 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     buttons(btn('Weiter', () => session(queue, i + 1, st), 'main'));
   };
   let check;
+  const questionBox = el('div', { className: 'box', textContent: card.question });
 
   if (card.type === 'free') {
     const nums = numbers(card.answer);
@@ -318,6 +320,12 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
     };
     input.onkeydown = e => { if (e.key === 'Enter' && !input.readOnly) { e.preventDefault(); check(); } };
     area.append(input, solution);
+  } else if (card.type === 'gap') {
+    const test = gapQuestion(card, area, questionBox);
+    check = () => finish(test());
+  } else if (card.type === 'match') {
+    const test = matchQuestion(card, area);
+    check = () => finish(test());
   } else if (card.type === 'choice') {
     const single = card.options.filter(o => o.ok).length === 1;
     const opts = shuffle(card.options).map(o => {
@@ -398,7 +406,7 @@ function session(queue, i = 0, st = { answered: 0, score: 0, streak: 0, best: 0,
   const bar = barNode(100 * (i + 1) / queue.length, 100 * i / queue.length);
   show(el('div', { className: 'progress' }, el('span', { textContent: st.practice ? 'Wiederholung' : `Fach ${box}` }), el('span', { textContent: `${i + 1} / ${queue.length}` })), bar,
     el('div', { className: 'cardhead' }, el('div', {}, badge(card.cat), ' ', levelBadge(card)), edit),
-    colored(el('div', { className: 'box', textContent: card.question }), card.cat), area, actions);
+    card.img ? imageView(card.img) : null, colored(questionBox, card.cat), area, actions);
   guard = 'Abfrage wirklich abbrechen?';
 }
 
@@ -462,21 +470,27 @@ function renameCategory(id) {
   if (cats().some(x => x.id !== c.id && x.name.toLowerCase() === name.toLowerCase())) return alert('Diesen Namen gibt es schon.');
   c.name = name; c.updated = Date.now(); save(); catEdit(id);
 }
-function deleteCategory(id) {
-  if (cards(id).length) return alert('Erst die Karten dieser Kategorie löschen oder verschieben.');
-  const c = db.categories.find(x => x.id === id);
-  if (!confirm(`Kategorie „${c.name}“ löschen?`)) return;
-  c.deleted = true; c.updated = Date.now(); if (filter === id) filter = ''; save(); go('cats');
+async function deleteCategory(id) {
+  const c = db.categories.find(x => x.id === id), n = cards(id).length;
+  if (!confirm(n ? `Kategorie „${c.name}“ und ${n} Karten löschen?\nGilt auf allen Geräten. Vorher wird ein Backup gespeichert.` : `Kategorie „${c.name}“ löschen?`)) return;
+  if (n) {
+    try { await exportData(); } catch (e) { return alert('Backup fehlgeschlagen, es wurde nichts gelöscht.'); }
+  }
+  const now = Date.now();
+  cards(id).forEach(k => Object.assign(k, { deleted: true, updated: now }));
+  Object.assign(db.categories.find(x => x.id === id), { deleted: true, updated: now });
+  if (filter === id) filter = '';
+  save(); go('cats');
 }
 
 function cardList() {
   const list = el('div');
-  const text = c => [c.question, c.answer, ...(c.options || []).map(o => o.text), ...(c.items || [])].join(' ').toLowerCase();
+  const text = c => [c.question, c.answer, ...(c.options || []).map(o => o.text), ...(c.items || []), ...(c.extra || []), ...(c.pairs || []).flat()].join(' ').toLowerCase();
   const draw = () => {
     const hits = cards().filter(c => text(c).includes(query.trim().toLowerCase()));
     list.replaceChildren(...hits.map(c => colored(el('div', { className: 'box list', onclick: () => editCard(c) }, badge(c.cat), ' ', levelBadge(c),
       el('div', { textContent: c.question }),
-      el('div', { className: 'small', textContent: `${TYPES[c.type]} · Fach ${prog(c).box}` })), c.cat)),
+      el('div', { className: 'small', textContent: `${TYPES[c.type]} · Fach ${prog(c).box}${c.img ? ' · 🖼️' : ''}` })), c.cat)),
       ...(hits.length ? [] : [el('p', { textContent: 'Keine Karten gefunden.' })]));
   };
   const search = el('input', { type: 'search', placeholder: '🔍 Suchen', value: query, oninput: () => { query = search.value; draw(); } });
@@ -505,6 +519,15 @@ function editCard(card, preset = {}, done = cardList) {
   const q = el('textarea', { value: card ? card.question : '' });
   const answer = el('textarea', { value: card && card.answer || '' });
   const items = el('textarea', { value: card && card.items ? card.items.join('\n') : '' });
+  const mode = el('select', {}, el('option', { value: 'bank', textContent: 'Begriffe in die Lücken ziehen' }),
+    el('option', { value: 'type', textContent: 'Lücken selbst tippen' }));
+  mode.value = card && card.mode === 'type' ? 'type' : 'bank';
+  const extra = el('textarea', { value: card && card.extra ? card.extra.join('\n') : '' });
+  const extraBox = el('div', {}, 'Falsche Begriffe (je Zeile einer, freiwillig)', extra);
+  mode.onchange = () => extraBox.hidden = mode.value !== 'bank';
+  mode.onchange();
+  const pairs = el('textarea', { value: card && card.pairs ? card.pairs.map(p => p.join(' = ')).join('\n') : '' });
+  const picture = imageField(card && card.img);
   const rows = el('div');
   const addRow = (o = { text: '', ok: false }) => {
     const row = el('div', { className: 'row' },
@@ -518,12 +541,26 @@ function editCard(card, preset = {}, done = cardList) {
   const parts = {
     free: el('div', {}, 'Richtige Antwort (wird automatisch geprüft)', answer),
     choice: el('div', {}, 'Antworten (Haken = richtig)', rows, btn('+ Antwort', () => addRow())),
-    order: el('div', {}, 'Schritte in richtiger Reihenfolge (je Zeile einer)', items)
+    order: el('div', {}, 'Schritte in richtiger Reihenfolge (je Zeile einer)', items),
+    gap: el('div', {}, el('p', { className: 'small', textContent: 'Lücken im Fragetext in [eckige Klammern] setzen. Alternativen: [TF|Truppführer]' }), 'Art', mode, extraBox),
+    match: el('div', {}, 'Paare (je Zeile: links = rechts)', pairs)
   };
-  type.onchange = () => Object.entries(parts).forEach(([k, p]) => p.hidden = k !== type.value);
+  const qLabel = el('span', { textContent: 'Frage' });
+  const qField = el('div', {}, qLabel, q);
+  const spoiler = el('div');
+  type.onchange = () => {
+    Object.entries(parts).forEach(([k, p]) => p.hidden = k !== type.value);
+    qLabel.textContent = type.value === 'gap' ? 'Text mit [Lücken]' : 'Frage';
+    // Beim Bearbeiten aus der Abfrage verrät der Lückentext die Lösung: einklappen
+    if (preset.hideAnswers && type.value === 'gap') {
+      if (!spoiler.firstChild) spoiler.append(el('details', {}, el('summary', { textContent: 'Text mit Lösungen anzeigen' })));
+      spoiler.firstChild.append(qField);
+    } else if (spoiler.firstChild) { spoiler.before(qField); spoiler.replaceChildren(); }
+  };
   type.onchange();
 
-  const submit = () => {
+  let saving = false;
+  const submit = async () => {
     const data = { cat: cat.value, type: type.value, level, question: q.value.trim() };
     if (!data.question) return alert('Die Frage fehlt.');
     if (data.type === 'free') {
@@ -532,10 +569,22 @@ function editCard(card, preset = {}, done = cardList) {
     } else if (data.type === 'choice') {
       data.options = [...rows.children].map(r => ({ ok: r.children[0].checked, text: r.children[1].value.trim() })).filter(o => o.text);
       if (data.options.length < 2 || !data.options.some(o => o.ok)) return alert('Mindestens 2 Antworten, davon 1 richtige.');
+    } else if (data.type === 'gap') {
+      if (!gapSolutions(data.question).length) return alert('Mindestens eine Lücke in [eckigen Klammern] angeben.');
+      data.mode = mode.value;
+      data.extra = extra.value.split('\n').map(s => s.trim()).filter(Boolean);
+    } else if (data.type === 'match') {
+      const list = parsePairs(pairs.value.split('\n').filter(l => l.trim()));
+      if (list.length < 2 || list.some(p => !p || !p[0] || !p[1])) return alert('Mindestens 2 Zeilen im Format links = rechts.');
+      data.pairs = list;
     } else {
       data.items = items.value.split('\n').map(s => s.trim()).filter(Boolean);
       if (data.items.length < 2) return alert('Mindestens 2 Zeilen.');
     }
+    if (saving) return;
+    saving = true;
+    try { data.img = await picture.value(); }
+    catch (e) { saving = false; return alert('Bild konnte nicht gespeichert werden.'); }
     data.updated = Date.now();
     settings.level = level; saveLocal();
     if (card) Object.assign(db.cards.find(x => x.id === card.id), data); else db.cards.push({ id: uid(), ...data });
@@ -544,7 +593,7 @@ function editCard(card, preset = {}, done = cardList) {
   };
 
   show(el('h2', { textContent: card ? 'Karte bearbeiten' : 'Neue Karte' }),
-    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Niveau', levels, 'Typ', type, 'Frage', q, preset.hideAnswers
+    el('div', { className: 'box form card-form' }, 'Kategorie', cat, 'Niveau', levels, 'Typ', type, qField, spoiler, picture.node, preset.hideAnswers
       ? el('details', {}, el('summary', { textContent: 'Antworten anzeigen' }), Object.values(parts))
       : Object.values(parts)),
     btn(card ? 'Speichern' : 'Speichern & nächste', submit, 'main'),
@@ -554,6 +603,7 @@ function editCard(card, preset = {}, done = cardList) {
       Object.assign(db.cards.find(x => x.id === card.id), { deleted: true, updated: Date.now() }); save(); done();
     }, 'bad') : null);
   back = () => done();
+  type.onchange();
 }
 
 // Eingaben im Kartenformular merken
@@ -609,9 +659,11 @@ function stats() {
 }
 
 /* ---------- Export / Import ---------- */
-function exportData() {
+async function exportData() {
+  const images = {};
+  for (const id of usedImages()) { const d = await imgGet(id); if (d) images[id] = d; }
   const a = el('a', {
-    href: URL.createObjectURL(new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' })),
+    href: URL.createObjectURL(new Blob([JSON.stringify({ ...db, images }, null, 1)], { type: 'application/json' })),
     download: `karteikarten_${new Date().toLocaleDateString('sv')}_${new Date().toTimeString().slice(0, 5).replace(':', '')}.json`
   });
   document.body.append(a); a.click(); a.remove();
@@ -621,7 +673,8 @@ function exportData() {
 function validCard(c) {
   return c && typeof c.id === 'string' && typeof c.question === 'string' && typeof c.cat === 'string' &&
     (c.deleted || (c.type === 'free' && typeof c.answer === 'string') ||
-      (c.type === 'choice' && Array.isArray(c.options)) || (c.type === 'order' && Array.isArray(c.items)));
+      (c.type === 'choice' && Array.isArray(c.options)) || (c.type === 'order' && Array.isArray(c.items)) ||
+      c.type === 'gap' || (c.type === 'match' && Array.isArray(c.pairs) && c.pairs.every(Array.isArray)));
 }
 
 // Zusammenführen: Inhalt = neuere Änderung gewinnt, Lernstand = zuletzt gelernter gewinnt
@@ -678,11 +731,13 @@ function data() {
   const file = el('input', { type: 'file', accept: '.json,application/json' });
   file.onchange = async () => {
     try {
-      const r = merge(JSON.parse(await file.files[0].text()));
+      const inc = JSON.parse(await file.files[0].text());
+      const r = merge(inc);
+      for (const [id, d] of Object.entries(inc.images || {})) if (IMG_ID.test(id) && isImage(d)) await imgPut(id, d);
       scheduleSync();
       alert(`Import fertig: ${r.added} neu, ${r.changed} aktualisiert.`);
       go('home');
-sync();
+      sync();
     } catch (e) { alert('Import fehlgeschlagen: ' + e.message); }
   };
   const field = (label, key, type = 'text') => {
@@ -724,7 +779,8 @@ function parseTable(text) {
   rows.at(-1).push(cell);
   return rows;
 }
-const IMPORT_TYPES = { frei: 'free', freitext: 'free', auswahl: 'choice', ordnen: 'order', reihenfolge: 'order' };
+const IMPORT_TYPES = { frei: 'free', freitext: 'free', auswahl: 'choice', ordnen: 'order', reihenfolge: 'order',
+  'lückentext': 'gap', 'lückenwahl': 'gap', zuordnen: 'match' };
 function readImport(text) {
   const rows = parseTable(text);
   let col = { cat: 0, level: 1, type: 2, q: 3, answers: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }, start = 0;
@@ -756,6 +812,14 @@ function readImport(text) {
     } else if (type === 'choice') {
       card.options = answers.map(a => ({ ok: a.startsWith('*'), text: a.replace(/^\*\s*/, '') })).filter(o => o.text);
       if (card.options.length < 2 || !card.options.some(o => o.ok)) return err('mind. 2 Antworten, richtige mit *');
+    } else if (type === 'gap') {
+      if (!gapSolutions(question).length) return err('keine [Lücke] im Text');
+      card.mode = get(col.type).toLowerCase() === 'lückentext' ? 'type' : 'bank';
+      card.extra = card.mode === 'bank' ? answers : [];
+    } else if (type === 'match') {
+      const list = parsePairs(answers);
+      if (list.length < 2 || list.some(p => !p || !p[0] || !p[1])) return err('mind. 2 Paare als links=rechts');
+      card.pairs = list;
     } else {
       if (answers.length < 2) return err('mind. 2 Antworten');
       card.items = answers;
@@ -773,10 +837,11 @@ function applyImport(list) {
     if (!c) { c = { id: uid(), name: cat, color: COLORS[cats().length % COLORS.length], updated: Date.now() }; db.categories.push(c); }
     const own = db.cards.find(x => !x.deleted && x.cat === c.id && norm(x.question) === norm(card.question));
     const sig = k => JSON.stringify([k.type, levelOf(k), k.question,
-      k.type === 'free' ? k.answer : k.type === 'choice' ? k.options.map(o => [o.text, !!o.ok]) : k.items]);
+      k.type === 'free' ? k.answer : k.type === 'choice' ? k.options.map(o => [o.text, !!o.ok])
+        : k.type === 'gap' ? [k.mode, k.extra] : k.type === 'match' ? k.pairs : k.items]);
     const same = own && sig(own) === sig(card);
     if (same) continue;
-    if (own) { delete own.answer; delete own.options; delete own.items; Object.assign(own, card, { updated: Date.now() }); changed++; }
+    if (own) { delete own.answer; delete own.options; delete own.items; delete own.pairs; delete own.mode; delete own.extra; Object.assign(own, card, { updated: Date.now() }); changed++; }
     else { db.cards.push({ id: uid(), cat: c.id, ...card, updated: Date.now() }); added++; }
   }
   save();
@@ -866,6 +931,7 @@ async function sync(manual) {
   busy = true; clearTimeout(timer); setStatus('Synchronisiere …');
   try {
     await syncOnce();
+    await syncImages();
     setStatus('Synchronisiert um ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
     if (screen && document.activeElement?.type !== 'search') ({ home, learn, cats: categoryList, cards: cardList, stats })[screen]();   // nie ein Formular oder eine Abfrage stören
   } catch (e) {

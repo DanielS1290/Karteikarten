@@ -81,3 +81,17 @@ input.right,input.wrong{background-repeat:no-repeat}
 .cattiles button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;margin:0;min-height:84px;padding:8px 4px;border:3px solid transparent;overflow-wrap:anywhere;font-size:.85rem;min-width:0}
 .cattiles button.on{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}.cattiles svg.mdi{width:28px;height:28px}
 .answerwrap{position:relative}
+.picture{margin-bottom:10px;text-align:center}.picture img{max-width:100%;max-height:34vh;border-radius:12px}.picture img.big{max-height:none}
+.chip{display:inline-block;background:var(--accent);border-radius:10px;padding:10px 14px;touch-action:none;user-select:none;cursor:grab;overflow-wrap:anywhere}
+.chip.drag{position:relative;z-index:5;box-shadow:0 8px 20px #000a}
+.pool{display:flex;flex-wrap:wrap;gap:8px;min-height:60px;padding:8px;border:2px dashed var(--line);border-radius:12px;margin-top:10px}
+.slot{min-height:48px;border:2px dashed var(--muted);border-radius:12px;display:flex;align-items:center;justify-content:center;padding:2px}
+.slot.gap{display:inline-flex;min-width:84px;min-height:42px;vertical-align:middle;margin:3px}
+.slot .chip{padding:7px 10px}.slot.right,.slot.wrong{border-style:solid}
+.slot.right,.gapinput.right{background:#1b7f3b;border-color:#1b7f3b}.slot.wrong,.gapinput.wrong{background:#b3261e;border-color:#b3261e}
+.slot.right .chip,.slot.wrong .chip{background:none}
+.slot.right::after{content:"✓";padding:0 6px}.slot.wrong::after{content:"✗";padding:0 6px}
+.box input.gapinput{display:inline-block;width:7.5em;margin:3px;padding:6px}
+.fix{color:var(--ok);font-weight:700}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;align-items:center}.pair .left{background:var(--card);border-radius:12px;padding:12px;overflow-wrap:anywhere}.pair .fix{grid-column:2}
+.swatches button{width:34px;height:34px}
